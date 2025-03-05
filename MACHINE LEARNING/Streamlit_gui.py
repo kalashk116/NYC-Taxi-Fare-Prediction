@@ -269,155 +269,118 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import sqlite3
-import base64
 import struct
 
+# Load your model and data
 model = pickle.load(open('2020_xgboost.pkl', 'rb'), encoding='latin1')
 mode_distances_df = pd.read_csv('mode_distances.csv')
 
+# Average trip distances
 average_trip_distances = {
-    (row['PULocationID'], row['DOLocationID']): row['AverageDistance']
+    (row['pickup_location'], row['drop_location']): row['AverageDistance']
     for _, row in mode_distances_df.iterrows()
 }
 
-time_categories = {1: "Day", 2: "Afternoon", 3: "Night"}
-months = {
-    "January": 1,
-    "February": 2,
-    "March": 3,
-    "April": 4,
-    "May": 5,
-    "June": 6,
-    "July": 7,
-    "August": 8,
-    "September": 9,
-    "October": 10,
-    "November": 11,
-    "December": 12
-}
+# Streamlit app
+st.title("Taxi Fare Prediction")
 
-days = {str(i): i for i in range(1, 32)}  
-days_options = ["Select a Day"] + list(days.keys())
-
-# database connection
+# Database connection
 conn = sqlite3.connect('taxi_fare_predictions.db')
 c = conn.cursor()
 
-# table creation
+# Table creation
 c.execute('''
     CREATE TABLE IF NOT EXISTS predictions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         time_of_day TEXT,
         month INTEGER,
         day INTEGER,
-        pickup_id INTEGER,
-        drop_id INTEGER,
+        pickup_location VARCHAR,
+        drop_location VARCHAR,
         predicted_fare REAL
     )
 ''')
 conn.commit()
 
-with st.container(key="test_container"):
-    st.markdown('<div class="container">', unsafe_allow_html=True)
-    
-    # Input values that user inserts
-    st.title("Taxi Fare Prediction")
+months = {
+    'January': 1, 'February': 2, 'March': 3, 'April': 4, 'May': 5,
+    'June': 6, 'July': 7, 'August': 8, 'September': 9, 'October': 10,
+    'November': 11, 'December': 12
+}
 
-    # Button for Tableau
-    st.markdown("<a href='https://public.tableau.com/views/TaxifarePred/Dashboard1?:language=en-US&publish=yes&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link' target='_blank'><button style='background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer;'>Open Tableau</button></a>", unsafe_allow_html=True)
+time = {str(i): i for i in range(1, 25)}
+# Input values that user inserts
+time_categories = st.selectbox("Select hour" ,{str(i): i for i in range(1, 25)})
+# Day Dropdown
+days = {str(i): i for i in range(1, 32)}  
+days_options = ["Select a Day"] + list(days.keys())
+day_var = st.selectbox("Select a Day:", days_options)
 
-    time_of_day_var = st.selectbox("Select Time of Day:", ["Select Time of Day", "Day", "Afternoon", "Night"])
-    month_var = st.selectbox("Select a Month:", ["Select a Month"] + list(months.keys()))
+# month
+month_var = st.selectbox("Select a Month:", ["Select a Month"] + list(months.keys()))
 
-    # Day Dropdown
-    day_var = st.selectbox("Select a Day:", days_options)
 
-    # Pickup ID Entry
-    pickup_id_entry = st.number_input("Enter Pickup ID:", min_value=0)
+value_to_key = {value: key for key, value in locations.items()}
 
-    # Drop ID Entry
-    drop_id_entry = st.number_input("Enter Drop ID:", min_value=0)
+# Pickup Location Input
+unique_pickup_locations1 = mode_distances_df['pickup_location'].unique()
+filtered_pickup_locations = {key: value for key, value in locations.items() if value in unique_pickup_locations1}
 
-    # Update Locations Button
-    def update_location_display(pickup_id, drop_id):
-        valid_location_found = False
-        pickup_location_description = ""
-        drop_location_description = ""
+# Create select box for pickup location
+selected_pickup_value = st.selectbox("Select Pickup Location:", list(filtered_pickup_locations.values()))
 
-        if pickup_id in locations:
-            pickup_location_description = f"PICKUP LOCATION: {locations[pickup_id]}"
-            valid_location_found = True
+# Filter drop locations based on selected pickup location
+if selected_pickup_value:
+    valid_drop_locations = mode_distances_df[mode_distances_df['pickup_location'] == selected_pickup_value]['drop_location'].unique()
+    filtered_drop_locations = {key: value for key, value in locations.items() if value in valid_drop_locations}
+else:
+    filtered_drop_locations = {}
+
+# Create select box for drop location
+selected_drop_value = st.selectbox("Select Drop Location:", ["Select Drop Location"] + list(filtered_drop_locations.values()))
+
+# Convert selected values back to keys
+selected_pickup_key = value_to_key[selected_pickup_value]
+
+# Button for Tableau
+st.markdown("<a href='https://public.tableau.com/views/TaxifarePred/Dashboard1?:language=en-US&publish=yes&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link' target='_blank'><button style='background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer;'>Open Tableau</button></a>", unsafe_allow_html=True)
+
+# Check if a drop location is selected
+if selected_drop_value == "Select Drop Location":
+    if selected_pickup_value=="Select a Pickup Location":
+        st.warning("Please select a drop location.")
+else:
+    selected_drop_key = value_to_key[selected_drop_value]
+
+    # Calculate average trip distance
+    if selected_drop_key==selected_pickup_key:
+        st.error('Pickup Location and Drop Location cannot be same. Please select a different location. ')
+        trip_distance = 0
+    else:
+        trip_distance = average_trip_distances.get((selected_pickup_value, selected_drop_value), None)
+
+        if trip_distance is not None:
+            st.write(f"Average Trip Distance: {trip_distance} miles")
         else:
-            pickup_location_description = "PICKUP_ID is not valid."
+            st.write("Average Trip Distance: Not available for the selected locations.")
 
-        if drop_id in locations:
-            drop_location_description = f"DROP LOCATION: {locations[drop_id]}"
-            valid_location_found = True
-        else:
-            drop_location_description = "DROP_ID is not valid."
-
-        st.write(pickup_location_description)
-        st.write(drop_location_description)
-
-        # Calculating the average trip distance
-        if valid_location_found:
-            trip_distance = average_trip_distances.get((pickup_id, drop_id))
-            if trip_distance is not None:
-                st.write(f"AVERAGE TRIP DISTANCE: {trip_distance} miles")
-                return trip_distance 
+        # Predict Fare Button
+        if st.button("Predict Fare"):
+            if time_categories == "Select Time of Day" or month_var == "Select a Month" or day_var == "Select a Day":
+                st.error("Please select valid inputs for time of day, month, and day.")
             else:
-                st.write("No average trip distance data available for the provided locations.")
-        else:
-            st.write("No valid locations found for the provided IDs.")
-        
-        return None 
-
-    # Button to update location information
-    if st.button("Update Locations"):
-        update_location_display(int(pickup_id_entry), int(drop_id_entry))
-
-    # Predict button click functions
-    if st.button("Predict Fare"):
-        try:
-            time_of_day = time_of_day_var
-            if time_of_day == "Select Time of Day":
-                st.error("Error: Please select the time of day.")
-            
-            month = month_var
-            if month == "Select a Month":
-                st.error("Error: Please select a valid month.")
-            
-            day = day_var
-            if day == "Select a Day":
-                st.error("Error: Please select a valid day.")
-
-            pickup_id = int(pickup_id_entry)
-            drop_id = int(drop_id_entry)
-
-            if pickup_id == drop_id:
-                st.error("PICKUP_ID and DROP_ID cannot be the same. Please enter different IDs.")
-
-            else:
-                trip_distance = update_location_display(pickup_id, drop_id)
-                if trip_distance is None:
-                    st.error("Error: No average trip distance data available for the provided locations.")
-
-                else:
-                    time_category_code = list(time_categories.keys())[list(time_categories.values()).index(time_of_day)]
-                    input_data = np.array([[time_category_code, int(days[day]), months[month], pickup_id, drop_id, trip_distance]])
-                    prediction = model.predict(input_data)
-                    prediction = struct.unpack('f', prediction)
-                    
-                    c.execute('''
-                        INSERT INTO predictions (time_of_day, month, day, pickup_id, drop_id, predicted_fare) 
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (time_of_day, months[month], int(days[day]), pickup_id, drop_id, round(prediction[0],2)))
-                    conn.commit()
-
-                    st.success(f"Predicted fare: ${prediction[0]:.2f}")
-
-        except Exception as e:
-            st.error(f"Unexpected Error: {str(e)}")
-
-    conn.close()
-    st.markdown('</div>', unsafe_allow_html=True)
+                # Prepare input data for the model
+                input_data = np.array([[time[time_categories], months[month_var], int(day_var), selected_pickup_key, selected_drop_key, trip_distance]])
+                
+                # Predict fare
+                predicted_fare = model.predict(input_data)[0]  # Get the first element from the prediction array
+                predictied_fare = struct.unpack('f', predicted_fare)[0]
+                
+                # Save prediction to database
+                c.execute('''
+                    INSERT INTO predictions (time_of_day, month, day, pickup_location, drop_location, predicted_fare)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (time_categories, months[month_var], int(day_var), selected_pickup_value, selected_drop_value, round(struct.unpack('f', predicted_fare)[0],2)))
+                conn.commit()
+                
+                st.success(f"Predicted Fare: ${predicted_fare:.2f}")
