@@ -101,14 +101,10 @@ locations = {
     100: "Garment District, Yellow Zone, Manhattan",
     101: "Glen Oaks, Boro Zone, Queens",
     102: "Glendale, Boro Zone, Queens",
-    103: "Governor's Island/Ellis Island/Liberty Island, Yellow Zone, Manhattan",
-    104: "Governor's Island/Ellis Island/Liberty Island, Yellow Zone, Manhattan",
-    105: "Governor's Island/Ellis Island/Liberty Island, Yellow Zone, Manhattan",
     106: "Gowanus, Boro Zone, Brooklyn",
     107: "Gramercy, Yellow Zone, Manhattan",
     108: "Gravesend, Boro Zone, Brooklyn",
     109: "Great Kills, Boro Zone, Staten Island",
-    110: "Great Kills Park, Boro Zone, Staten Island",
     111: "Green-Wood Cemetery, Boro Zone, Brooklyn",
     112: "Greenpoint, Boro Zone, Brooklyn",
     113: "Greenwich Village North, Yellow Zone, Manhattan",
@@ -197,7 +193,6 @@ locations = {
     196: "Rego Park, Boro Zone, Queens",
     197: "Richmond Hill, Boro Zone, Queens",
     198: "Ridgewood, Boro Zone, Queens",
-    199: "Rikers Island, Boro Zone, Bronx",
     200: "Riverdale/North Riverdale/Fieldston, Boro Zone, Bronx",
     201: "Rockaway Park, Boro Zone, Queens",
     202: "Roosevelt Island, Boro Zone, Manhattan",
@@ -271,24 +266,19 @@ import numpy as np
 import sqlite3
 import struct
 
-# Load your model and data
-model = pickle.load(open('2020_xgboost.pkl', 'rb'), encoding='latin1')
+model = pickle.load(open('2020_ohe_xgboost.pkl', 'rb'), encoding='latin1')
 mode_distances_df = pd.read_csv('mode_distances.csv')
 
-# Average trip distances
 average_trip_distances = {
     (row['pickup_location'], row['drop_location']): row['AverageDistance']
     for _, row in mode_distances_df.iterrows()
 }
 
-# Streamlit app
 st.title("Taxi Fare Prediction")
 
-# Database connection
 conn = sqlite3.connect('taxi_fare_predictions.db')
 c = conn.cursor()
 
-# Table creation
 c.execute('''
     CREATE TABLE IF NOT EXISTS predictions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -309,52 +299,39 @@ months = {
 }
 
 time = {str(i): i for i in range(1, 25)}
-# Input values that user inserts
-time_categories = st.selectbox("Select hour" ,{str(i): i for i in range(1, 25)})
-# Day Dropdown
+time_categories = st.selectbox("Select hour", {str(i): i for i in range(1, 25)})
 days = {str(i): i for i in range(1, 32)}  
 days_options = ["Select a Day"] + list(days.keys())
 day_var = st.selectbox("Select a Day:", days_options)
 
-# month
 month_var = st.selectbox("Select a Month:", ["Select a Month"] + list(months.keys()))
-
 
 value_to_key = {value: key for key, value in locations.items()}
 
-# Pickup Location Input
 unique_pickup_locations1 = mode_distances_df['pickup_location'].unique()
 filtered_pickup_locations = {key: value for key, value in locations.items() if value in unique_pickup_locations1}
 
-# Create select box for pickup location
 selected_pickup_value = st.selectbox("Select Pickup Location:", list(filtered_pickup_locations.values()))
 
-# Filter drop locations based on selected pickup location
 if selected_pickup_value:
     valid_drop_locations = mode_distances_df[mode_distances_df['pickup_location'] == selected_pickup_value]['drop_location'].unique()
     filtered_drop_locations = {key: value for key, value in locations.items() if value in valid_drop_locations}
 else:
     filtered_drop_locations = {}
 
-# Create select box for drop location
 selected_drop_value = st.selectbox("Select Drop Location:", ["Select Drop Location"] + list(filtered_drop_locations.values()))
 
-# Convert selected values back to keys
-selected_pickup_key = value_to_key[selected_pickup_value]
-
-# Button for Tableau
 st.markdown("<a href='https://public.tableau.com/views/TaxifarePred/Dashboard1?:language=en-US&publish=yes&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link' target='_blank'><button style='background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; font-size: 16px; cursor: pointer;'>Open Tableau</button></a>", unsafe_allow_html=True)
 
-# Check if a drop location is selected
 if selected_drop_value == "Select Drop Location":
-    if selected_pickup_value=="Select a Pickup Location":
+    if selected_pickup_value == "Select a Pickup Location":
         st.warning("Please select a drop location.")
 else:
+    selected_pickup_key = value_to_key[selected_pickup_value]
     selected_drop_key = value_to_key[selected_drop_value]
 
-    # Calculate average trip distance
-    if selected_drop_key==selected_pickup_key:
-        st.error('Pickup Location and Drop Location cannot be same. Please select a different location. ')
+    if selected_drop_key == selected_pickup_key:
+        st.error('Pickup Location and Drop Location cannot be the same. Please select a different location.')
         trip_distance = 0
     else:
         trip_distance = average_trip_distances.get((selected_pickup_value, selected_drop_value), None)
@@ -364,23 +341,33 @@ else:
         else:
             st.write("Average Trip Distance: Not available for the selected locations.")
 
-        # Predict Fare Button
         if st.button("Predict Fare"):
             if time_categories == "Select Time of Day" or month_var == "Select a Month" or day_var == "Select a Day":
                 st.error("Please select valid inputs for time of day, month, and day.")
             else:
-                # Prepare input data for the model
-                input_data = np.array([[time[time_categories], months[month_var], int(day_var), selected_pickup_key, selected_drop_key, trip_distance]])
+                # Create input_data with size for time, month, day, distance, and location details
+                input_data = np.zeros(4 + len(locations) + len(locations))  # 4 initial values + locations for pickup + drop
+
+                # Set values for time of day, month, day, and trip distance
+                input_data[0] = time[time_categories]  # Time of Day
+                input_data[1] = months[month_var]       # Month
+                input_data[2] = int(day_var)             # Day of Month
+                input_data[3] = trip_distance if trip_distance is not None else 0  # Trip Distance
+
+                # Set pickup location index
+                input_data[4 + selected_pickup_key] = 1  # Starting at index 4 for pickup location
+
+                # Set drop location index
+                input_data[4 + 263 + selected_drop_key] = 1  # Starting at index (4 + 263) for drop location
+
+                # Predict fare using the prepared input data
+                predicted_fare = model.predict(input_data.reshape(1, -1))[0]
                 
-                # Predict fare
-                predicted_fare = model.predict(input_data)[0]  # Get the first element from the prediction array
-                predictied_fare = struct.unpack('f', predicted_fare)[0]
-                
-                # Save prediction to database
+                # Store prediction in the database
                 c.execute('''
                     INSERT INTO predictions (time_of_day, month, day, pickup_location, drop_location, predicted_fare)
                     VALUES (?, ?, ?, ?, ?, ?)
-                ''', (time_categories, months[month_var], int(day_var), selected_pickup_value, selected_drop_value, round(struct.unpack('f', predicted_fare)[0],2)))
+                ''', (time_categories, months[month_var], int(day_var), selected_pickup_value, selected_drop_value, round(predicted_fare, 2)))
                 conn.commit()
                 
                 st.success(f"Predicted Fare: ${predicted_fare:.2f}")
